@@ -12,6 +12,9 @@ const messages = document.querySelector('#messages');
 const welcomeState = document.querySelector('#welcome-state');
 const chatForm = document.querySelector('#chat-form');
 const chatInput = document.querySelector('#chat-input');
+const fileInput = document.querySelector('#file-input');
+const attachButton = document.querySelector('#attach-button');
+const attachmentTray = document.querySelector('#attachment-tray');
 const modelButtons = document.querySelectorAll('.model-option');
 const promptButtons = document.querySelectorAll('.prompt-grid button');
 const sidebar = document.querySelector('#sidebar');
@@ -44,6 +47,19 @@ let activeConversationId = null;
 let activeConversationUpdatedAt = '';
 let isSending = false;
 let syncTimer = null;
+let selectedAttachments = [];
+
+const MAX_ATTACHMENT_COUNT = 4;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const ALLOWED_ATTACHMENT_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'application/pdf',
+  'text/plain', 'text/markdown', 'text/csv',
+]);
+const EXTENSION_MIME_TYPES = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+  pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv',
+};
 
 const modelInfo = {
   low: { title: 'LOW', description: 'Быстрый режим' },
@@ -73,6 +89,108 @@ const showToast = (text) => {
   toast.hidden = false;
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3200);
+};
+
+const attachmentMimeType = (file) => {
+  const extension = String(file.name || '').split('.').pop().toLowerCase();
+  return ALLOWED_ATTACHMENT_TYPES.has(file.type) ? file.type : EXTENSION_MIME_TYPES[extension] || '';
+};
+
+const formatFileSize = (bytes) => bytes >= 1024 * 1024
+  ? `${(bytes / (1024 * 1024)).toFixed(1)} МБ`
+  : `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+
+const renderAttachmentTray = () => {
+  attachmentTray.replaceChildren();
+  attachmentTray.hidden = !selectedAttachments.length;
+  selectedAttachments.forEach((attachment, index) => {
+    const card = document.createElement('div');
+    card.className = 'attachment-card';
+    const preview = attachment.previewUrl ? document.createElement('img') : document.createElement('span');
+    if (attachment.previewUrl) {
+      preview.src = attachment.previewUrl;
+      preview.alt = '';
+    } else {
+      preview.className = 'attachment-file-icon';
+      preview.textContent = attachment.mimeType === 'application/pdf' ? 'PDF' : 'TXT';
+    }
+    const info = document.createElement('span');
+    const name = document.createElement('b');
+    name.textContent = attachment.file.name;
+    const size = document.createElement('small');
+    size.textContent = formatFileSize(attachment.file.size);
+    info.append(name, size);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.disabled = isSending;
+    remove.setAttribute('aria-label', `Убрать ${attachment.file.name}`);
+    remove.addEventListener('click', () => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      selectedAttachments.splice(index, 1);
+      renderAttachmentTray();
+    });
+    card.append(preview, info, remove);
+    attachmentTray.append(card);
+  });
+};
+
+const addAttachments = (files) => {
+  const incoming = Array.from(files || []);
+  for (const file of incoming) {
+    if (selectedAttachments.length >= MAX_ATTACHMENT_COUNT) {
+      showToast(`Можно прикрепить не больше ${MAX_ATTACHMENT_COUNT} файлов.`);
+      break;
+    }
+    const mimeType = attachmentMimeType(file);
+    if (!mimeType) {
+      showToast(`Формат файла «${file.name}» не поддерживается.`);
+      continue;
+    }
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      showToast(`Файл «${file.name}» больше 5 МБ.`);
+      continue;
+    }
+    const totalBytes = selectedAttachments.reduce((sum, item) => sum + item.file.size, 0) + file.size;
+    if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+      showToast('Общий размер вложений не должен превышать 8 МБ.');
+      break;
+    }
+    const duplicate = selectedAttachments.some((item) => (
+      item.file.name === file.name && item.file.size === file.size && item.file.lastModified === file.lastModified
+    ));
+    if (duplicate) continue;
+    selectedAttachments.push({
+      file,
+      mimeType,
+      previewUrl: mimeType.startsWith('image/') ? URL.createObjectURL(file) : '',
+    });
+  }
+  fileInput.value = '';
+  renderAttachmentTray();
+};
+
+const clearAttachments = () => {
+  selectedAttachments.forEach((attachment) => {
+    if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+  });
+  selectedAttachments = [];
+  fileInput.value = '';
+  renderAttachmentTray();
+};
+
+const attachmentPayload = async (attachment) => {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(`Не удалось прочитать файл «${attachment.file.name}».`));
+    reader.readAsDataURL(attachment.file);
+  });
+  return {
+    name: attachment.file.name.slice(0, 120),
+    mime_type: attachment.mimeType,
+    data: dataUrl.slice(dataUrl.indexOf(',') + 1),
+  };
 };
 
 const setAuthenticated = (authenticated) => {
@@ -204,6 +322,217 @@ const selectModel = async (model, persist = true) => {
   }
 };
 
+const appendInlineMarkdown = (parent, source) => {
+  const text = String(source || '');
+  const tokenPattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\[[^\]\n]+\]\((?:https?:\/\/|mailto:)[^)\s]+\)|\*[^*\n]+\*|_[^_\n]+_|https?:\/\/[^\s<]+)/g;
+  let cursor = 0;
+  for (const match of text.matchAll(tokenPattern)) {
+    if (match.index > cursor) parent.append(document.createTextNode(text.slice(cursor, match.index)));
+    const token = match[0];
+    if (token.startsWith('`')) {
+      const code = document.createElement('code');
+      code.textContent = token.slice(1, -1);
+      parent.append(code);
+    } else if ((token.startsWith('**') && token.endsWith('**')) || (token.startsWith('__') && token.endsWith('__'))) {
+      const strong = document.createElement('strong');
+      appendInlineMarkdown(strong, token.slice(2, -2));
+      parent.append(strong);
+    } else if (token.startsWith('~~') && token.endsWith('~~')) {
+      const deleted = document.createElement('del');
+      appendInlineMarkdown(deleted, token.slice(2, -2));
+      parent.append(deleted);
+    } else if ((token.startsWith('*') && token.endsWith('*')) || (token.startsWith('_') && token.endsWith('_'))) {
+      const emphasis = document.createElement('em');
+      appendInlineMarkdown(emphasis, token.slice(1, -1));
+      parent.append(emphasis);
+    } else if (token.startsWith('[')) {
+      const linkMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      const link = document.createElement('a');
+      link.textContent = linkMatch[1];
+      link.href = linkMatch[2];
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer nofollow';
+      parent.append(link);
+    } else {
+      const link = document.createElement('a');
+      link.textContent = token;
+      link.href = token;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer nofollow';
+      parent.append(link);
+    }
+    cursor = match.index + token.length;
+  }
+  if (cursor < text.length) parent.append(document.createTextNode(text.slice(cursor)));
+};
+
+const splitTableRow = (line) => {
+  const placeholder = '\u0000PIPE\u0000';
+  return line.trim().replace(/^\||\|$/g, '').replace(/\\\|/g, placeholder).split('|')
+    .map((cell) => cell.trim().replaceAll(placeholder, '|'));
+};
+
+const tableSeparator = (line) => /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+
+const lineStartsBlock = (lines, index) => {
+  const line = lines[index] || '';
+  if (!line.trim()) return true;
+  if (/^\s*```/.test(line) || /^\s{0,3}#{1,4}\s+/.test(line) || /^\s*>\s?/.test(line)) return true;
+  if (/^\s*(?:[-*+] |\d+\. )/.test(line) || /^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line)) return true;
+  return line.includes('|') && tableSeparator(lines[index + 1] || '');
+};
+
+const renderMarkdown = (container, source) => {
+  container.replaceChildren();
+  container.classList.add('markdown-body');
+  const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const fence = line.match(/^\s*```\s*([\w.+#-]*)\s*$/);
+    if (fence) {
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !/^\s*```\s*$/.test(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      const codeText = codeLines.join('\n');
+      const shell = document.createElement('div');
+      shell.className = 'markdown-code-block';
+      const header = document.createElement('div');
+      header.className = 'markdown-code-head';
+      const language = document.createElement('span');
+      language.textContent = fence[1] || 'CODE';
+      const copy = document.createElement('button');
+      copy.className = 'markdown-copy-button';
+      copy.type = 'button';
+      copy.textContent = 'Копировать';
+      copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(codeText);
+          copy.textContent = 'Скопировано';
+          setTimeout(() => { copy.textContent = 'Копировать'; }, 1400);
+        } catch {
+          showToast('Не удалось скопировать код');
+        }
+      });
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.textContent = codeText;
+      pre.append(code);
+      header.append(language, copy);
+      shell.append(header, pre);
+      container.append(shell);
+      continue;
+    }
+
+    if (line.includes('|') && tableSeparator(lines[index + 1] || '')) {
+      const headers = splitTableRow(line);
+      const alignment = splitTableRow(lines[index + 1]).map((cell) => {
+        const left = cell.startsWith(':');
+        const right = cell.endsWith(':');
+        return left && right ? 'center' : right ? 'right' : 'left';
+      });
+      index += 2;
+      const rows = [];
+      while (index < lines.length && lines[index].includes('|') && lines[index].trim()) {
+        rows.push(splitTableRow(lines[index]));
+        index += 1;
+      }
+      const wrapper = document.createElement('div');
+      wrapper.className = 'markdown-table-wrap';
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      headers.forEach((cell, cellIndex) => {
+        const th = document.createElement('th');
+        th.style.textAlign = alignment[cellIndex] || 'left';
+        appendInlineMarkdown(th, cell);
+        headRow.append(th);
+      });
+      thead.append(headRow);
+      const tbody = document.createElement('tbody');
+      rows.forEach((row) => {
+        const tr = document.createElement('tr');
+        headers.forEach((_, cellIndex) => {
+          const td = document.createElement('td');
+          td.style.textAlign = alignment[cellIndex] || 'left';
+          appendInlineMarkdown(td, row[cellIndex] || '');
+          tr.append(td);
+        });
+        tbody.append(tr);
+      });
+      table.append(thead, tbody);
+      wrapper.append(table);
+      container.append(wrapper);
+      continue;
+    }
+
+    const heading = line.match(/^\s{0,3}(#{1,4})\s+(.+)$/);
+    if (heading) {
+      const element = document.createElement(`h${Math.min(heading[1].length + 2, 6)}`);
+      appendInlineMarkdown(element, heading[2].replace(/\s+#+\s*$/, ''));
+      container.append(element);
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line)) {
+      container.append(document.createElement('hr'));
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const quote = document.createElement('blockquote');
+      while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+        if (quote.childNodes.length) quote.append(document.createElement('br'));
+        appendInlineMarkdown(quote, lines[index].replace(/^\s*>\s?/, ''));
+        index += 1;
+      }
+      container.append(quote);
+      continue;
+    }
+
+    const listItem = line.match(/^\s*([-*+]|\d+\.)\s+(.+)$/);
+    if (listItem) {
+      const ordered = /\d+\./.test(listItem[1]);
+      const list = document.createElement(ordered ? 'ol' : 'ul');
+      while (index < lines.length) {
+        const item = lines[index].match(/^\s*([-*+]|\d+\.)\s+(.+)$/);
+        if (!item || /\d+\./.test(item[1]) !== ordered) break;
+        const li = document.createElement('li');
+        appendInlineMarkdown(li, item[2]);
+        list.append(li);
+        index += 1;
+      }
+      container.append(list);
+      continue;
+    }
+
+    const paragraphLines = [line.trim()];
+    index += 1;
+    while (index < lines.length && !lineStartsBlock(lines, index)) {
+      paragraphLines.push(lines[index].trim());
+      index += 1;
+    }
+    const paragraph = document.createElement('p');
+    paragraphLines.forEach((paragraphLine, lineIndex) => {
+      if (lineIndex) paragraph.append(document.createElement('br'));
+      appendInlineMarkdown(paragraph, paragraphLine);
+    });
+    container.append(paragraph);
+  }
+};
+
 const addMessage = (role, text, options = {}) => {
   welcomeState.hidden = true;
   const row = document.createElement('article');
@@ -223,7 +552,18 @@ const addMessage = (role, text, options = {}) => {
   detail.textContent = role === 'assistant' ? modelInfo[messageModel].title : 'сейчас';
   const body = document.createElement('div');
   body.className = 'message-text';
-  body.textContent = text;
+  if (role === 'assistant' && !options.loading) renderMarkdown(body, text);
+  else body.textContent = text;
+  if (Array.isArray(options.attachments) && options.attachments.length) {
+    const fileList = document.createElement('div');
+    fileList.className = 'message-attachments';
+    options.attachments.forEach((fileName) => {
+      const chip = document.createElement('span');
+      chip.textContent = `▧ ${fileName}`;
+      fileList.append(chip);
+    });
+    body.append(fileList);
+  }
   meta.append(name, detail);
   content.append(meta, body);
   row.append(avatar, content);
@@ -384,23 +724,33 @@ const clearActiveConversation = async () => {
   }
 };
 
-const sendMessage = async (text) => {
-  if (isSending || !text.trim()) return;
+const sendMessage = async (text, attachments = []) => {
+  if (isSending || (!text.trim() && !attachments.length)) return;
   if (!activeConversationId) await createConversation();
-  const clean = text.trim();
+  const clean = text.trim() || 'Проанализируй прикреплённые файлы.';
   isSending = true;
-  chatForm.querySelector('button').disabled = true;
-  const optimisticUser = addMessage('user', clean);
+  const sendButton = chatForm.querySelector('.send-button');
+  sendButton.disabled = true;
+  attachButton.disabled = true;
+  renderAttachmentTray();
+  const optimisticUser = addMessage('user', clean, { attachments: attachments.map((item) => item.file.name) });
   const loading = addMessage('assistant', 'Думаю', { loading: true, model: selectedModel });
 
   try {
+    const payloadAttachments = await Promise.all(attachments.map(attachmentPayload));
     const data = await api('/api/chat', {
       method: 'POST',
-      body: JSON.stringify({ conversation_id: activeConversationId, model: selectedModel, message: clean }),
+      body: JSON.stringify({
+        conversation_id: activeConversationId,
+        model: selectedModel,
+        message: clean,
+        attachments: payloadAttachments,
+      }),
     });
     loading.remove();
     optimisticUser.dataset.saved = 'true';
     addMessage('assistant', data.answer, { model: selectedModel });
+    clearAttachments();
     updateProfileUi({ user: profile.user, usage: data.usage });
     updateConversation(data.conversation);
     syncStatus.textContent = 'синхронизировано';
@@ -412,7 +762,9 @@ const sendMessage = async (text) => {
     if (error.status === 401) await logout(false);
   } finally {
     isSending = false;
-    chatForm.querySelector('button').disabled = false;
+    sendButton.disabled = false;
+    attachButton.disabled = false;
+    renderAttachmentTray();
     chatInput.focus();
   }
 };
@@ -450,6 +802,7 @@ const startSync = () => {
 
 const logout = async (notifyWorker = true) => {
   clearInterval(syncTimer);
+  clearAttachments();
   personalizationModal.hidden = true;
   document.body.classList.remove('modal-open');
   if (notifyWorker && sessionToken) {
@@ -503,10 +856,11 @@ loginForm?.addEventListener('submit', async (event) => {
 chatForm?.addEventListener('submit', (event) => {
   event.preventDefault();
   const value = chatInput.value;
-  if (!value.trim()) return;
+  if (!value.trim() && !selectedAttachments.length) return;
+  const attachments = [...selectedAttachments];
   chatInput.value = '';
   chatInput.style.height = '';
-  sendMessage(value);
+  sendMessage(value, attachments);
 });
 
 chatInput?.addEventListener('keydown', (event) => {
@@ -519,6 +873,27 @@ chatInput?.addEventListener('keydown', (event) => {
 chatInput?.addEventListener('input', () => {
   chatInput.style.height = 'auto';
   chatInput.style.height = `${Math.min(chatInput.scrollHeight, 150)}px`;
+});
+
+attachButton?.addEventListener('click', () => fileInput.click());
+fileInput?.addEventListener('change', () => addAttachments(fileInput.files));
+
+chatInput?.addEventListener('paste', (event) => {
+  const images = Array.from(event.clipboardData?.files || []).filter((file) => file.type.startsWith('image/'));
+  if (images.length) addAttachments(images);
+});
+
+chatForm?.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  if (!isSending) chatForm.classList.add('dragging');
+});
+chatForm?.addEventListener('dragleave', (event) => {
+  if (!chatForm.contains(event.relatedTarget)) chatForm.classList.remove('dragging');
+});
+chatForm?.addEventListener('drop', (event) => {
+  event.preventDefault();
+  chatForm.classList.remove('dragging');
+  if (!isSending) addAttachments(event.dataTransfer?.files);
 });
 
 modelButtons.forEach((button) => button.addEventListener('click', () => selectModel(button.dataset.model)));
