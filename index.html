@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260805-6">
+  <link rel="stylesheet" href="styles.css?v=20260805-7">
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -97,7 +97,7 @@
         <p id="reset-label">Обновится завтра</p>
         <a href="https://t.me/zashugannyygiftcat_bot" target="_blank" rel="noopener noreferrer">Управлять подпиской ↗</a>
       </div>
-      <p class="sidebar-foot">WEB BUILD / 06 · FILES</p>
+      <p class="sidebar-foot">WEB BUILD / 07 · VOICE</p>
     </aside>
 
     <main class="chat-main">
@@ -125,16 +125,18 @@
         <form class="composer glass" id="chat-form">
           <div class="attachment-tray" id="attachment-tray" aria-live="polite" hidden></div>
           <textarea id="chat-input" rows="1" maxlength="6000" placeholder="Напишите сообщение или прикрепите файл…"></textarea>
+          <div class="recording-bar" id="recording-bar" role="status" hidden><i></i><b id="recording-time">00:00</b><span>Нажмите микрофон ещё раз, чтобы отправить</span></div>
           <input id="file-input" type="file" accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,text/markdown,text/csv,.md,.csv" multiple hidden>
           <div class="composer-bottom">
             <div class="composer-tools">
               <button class="attach-button" id="attach-button" type="button" aria-label="Прикрепить картинку или документ" title="Прикрепить файл">＋</button>
+              <button class="mic-button" id="mic-button" type="button" aria-label="Записать голосовое сообщение" title="Записать голосовое сообщение">🎙</button>
               <span><b id="composer-model">LOW</b> · <i id="composer-remaining">3 запроса</i></span>
             </div>
             <button class="send-button" type="submit" aria-label="Отправить">↑</button>
           </div>
         </form>
-        <p>Картинки и документы передаются в Gemini только для текущего запроса и не сохраняются на сайте.</p>
+        <p>Файлы и голос передаются в Gemini только для текущего запроса и не сохраняются на сайте.</p>
       </div>
     </main>
   </div>
@@ -174,7 +176,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-  <script src="config.js?v=20260805-6"></script>
-  <script src="script.js?v=20260805-6"></script>
+  <script src="config.js?v=20260805-7"></script>
+  <script src="script.js?v=20260805-7"></script>
 </body>
 </html>

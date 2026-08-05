@@ -14,7 +14,10 @@ const chatForm = document.querySelector('#chat-form');
 const chatInput = document.querySelector('#chat-input');
 const fileInput = document.querySelector('#file-input');
 const attachButton = document.querySelector('#attach-button');
+const micButton = document.querySelector('#mic-button');
 const attachmentTray = document.querySelector('#attachment-tray');
+const recordingBar = document.querySelector('#recording-bar');
+const recordingTime = document.querySelector('#recording-time');
 const modelButtons = document.querySelectorAll('.model-option');
 const promptButtons = document.querySelectorAll('.prompt-grid button');
 const sidebar = document.querySelector('#sidebar');
@@ -48,10 +51,20 @@ let activeConversationUpdatedAt = '';
 let isSending = false;
 let syncTimer = null;
 let selectedAttachments = [];
+let mediaRecorder = null;
+let recordingStream = null;
+let recordingChunks = [];
+let recordingStartedAt = 0;
+let recordingTimer = null;
+let recordingTimeout = null;
+let isRecording = false;
+let isStartingRecording = false;
+let discardRecording = false;
 
 const MAX_ATTACHMENT_COUNT = 4;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_RECORDING_MS = 2 * 60 * 1000;
 const ALLOWED_ATTACHMENT_TYPES = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'application/pdf',
   'text/plain', 'text/markdown', 'text/csv',
@@ -191,6 +204,202 @@ const attachmentPayload = async (attachment) => {
     mime_type: attachment.mimeType,
     data: dataUrl.slice(dataUrl.indexOf(',') + 1),
   };
+};
+
+const writeWavString = (view, offset, value) => {
+  for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+};
+
+const audioBufferToWav = (audioBuffer, targetSampleRate = 16000) => {
+  const outputLength = Math.max(1, Math.ceil(audioBuffer.duration * targetSampleRate));
+  const wavBuffer = new ArrayBuffer(44 + outputLength * 2);
+  const view = new DataView(wavBuffer);
+  writeWavString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + outputLength * 2, true);
+  writeWavString(view, 8, 'WAVE');
+  writeWavString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetSampleRate, true);
+  view.setUint32(28, targetSampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeWavString(view, 36, 'data');
+  view.setUint32(40, outputLength * 2, true);
+
+  const channels = Array.from({ length: audioBuffer.numberOfChannels }, (_, index) => audioBuffer.getChannelData(index));
+  const ratio = audioBuffer.sampleRate / targetSampleRate;
+  for (let outputIndex = 0; outputIndex < outputLength; outputIndex += 1) {
+    const position = outputIndex * ratio;
+    const left = Math.min(Math.floor(position), audioBuffer.length - 1);
+    const right = Math.min(left + 1, audioBuffer.length - 1);
+    const mix = position - left;
+    let sample = 0;
+    channels.forEach((channel) => { sample += channel[left] + (channel[right] - channel[left]) * mix; });
+    sample = Math.max(-1, Math.min(1, sample / channels.length));
+    view.setInt16(44 + outputIndex * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+  return new Blob([wavBuffer], { type: 'audio/wav' });
+};
+
+const recordingToWavFile = async (recordingBlob) => {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error('Этот браузер не умеет обрабатывать голосовые сообщения.');
+  const context = new AudioContextClass();
+  try {
+    const source = await recordingBlob.arrayBuffer();
+    const decoded = await context.decodeAudioData(source.slice(0));
+    const wavBlob = audioBufferToWav(decoded);
+    return new File([wavBlob], `Голосовое-${Date.now()}.wav`, { type: 'audio/wav' });
+  } finally {
+    await context.close().catch(() => {});
+  }
+};
+
+const recordingMimeType = () => {
+  const candidates = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg'];
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+};
+
+const updateRecordingClock = () => {
+  const seconds = Math.min(Math.floor((Date.now() - recordingStartedAt) / 1000), MAX_RECORDING_MS / 1000);
+  recordingTime.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+};
+
+const resetRecordingUi = () => {
+  clearInterval(recordingTimer);
+  clearTimeout(recordingTimeout);
+  recordingTimer = null;
+  recordingTimeout = null;
+  recordingBar.hidden = true;
+  recordingBar.querySelector('span').textContent = 'Нажмите микрофон ещё раз, чтобы отправить';
+  micButton.classList.remove('recording');
+  micButton.textContent = '🎙';
+  micButton.setAttribute('aria-label', 'Записать голосовое сообщение');
+  micButton.title = 'Записать голосовое сообщение';
+  attachButton.disabled = isSending;
+  chatForm.querySelector('.send-button').disabled = isSending;
+};
+
+const stopRecordingTracks = () => {
+  recordingStream?.getTracks().forEach((track) => track.stop());
+  recordingStream = null;
+};
+
+const handleFinishedRecording = async () => {
+  const chunks = recordingChunks;
+  const type = mediaRecorder?.mimeType || chunks[0]?.type || 'audio/webm';
+  recordingChunks = [];
+  mediaRecorder = null;
+  stopRecordingTracks();
+  if (discardRecording) {
+    discardRecording = false;
+    resetRecordingUi();
+    return;
+  }
+  try {
+    const sourceBlob = new Blob(chunks, { type });
+    if (sourceBlob.size < 800) throw new Error('Запись получилась пустой. Попробуйте ещё раз.');
+    const voiceFile = await recordingToWavFile(sourceBlob);
+    if (voiceFile.size > MAX_ATTACHMENT_BYTES) throw new Error('Голосовое сообщение получилось слишком большим.');
+    resetRecordingUi();
+    const typedText = chatInput.value.trim();
+    chatInput.value = '';
+    chatInput.style.height = '';
+    await sendMessage(typedText || 'Голосовое сообщение', [{ file: voiceFile, mimeType: 'audio/wav', previewUrl: '' }], { voiceMessage: true });
+  } catch (error) {
+    resetRecordingUi();
+    micButton.disabled = false;
+    showToast(error.message || 'Не удалось обработать голосовое сообщение.');
+  }
+};
+
+const stopVoiceRecording = (automatic = false) => {
+  if (!isRecording || !mediaRecorder) return;
+  isRecording = false;
+  clearInterval(recordingTimer);
+  clearTimeout(recordingTimeout);
+  recordingBar.querySelector('span').textContent = 'Обрабатываю голос…';
+  micButton.classList.remove('recording');
+  micButton.disabled = true;
+  if (automatic) showToast('Достигнут лимит 2 минуты. Отправляю запись.');
+  mediaRecorder.stop();
+};
+
+const cancelVoiceRecording = () => {
+  if (mediaRecorder) discardRecording = true;
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+    isRecording = false;
+    stopRecordingTracks();
+    resetRecordingUi();
+    return;
+  }
+  discardRecording = true;
+  isRecording = false;
+  mediaRecorder.stop();
+  stopRecordingTracks();
+  resetRecordingUi();
+};
+
+const startVoiceRecording = async () => {
+  if (isSending || isStartingRecording) return;
+  if (selectedAttachments.length) {
+    showToast('Сначала отправьте или уберите выбранные файлы.');
+    return;
+  }
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    showToast('Запись голоса доступна только на HTTPS в современном браузере.');
+    return;
+  }
+  isStartingRecording = true;
+  micButton.disabled = true;
+  try {
+    recordingStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    const mimeType = recordingMimeType();
+    mediaRecorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream);
+    recordingChunks = [];
+    discardRecording = false;
+    mediaRecorder.addEventListener('dataavailable', (event) => {
+      if (event.data.size) recordingChunks.push(event.data);
+    });
+    mediaRecorder.addEventListener('stop', handleFinishedRecording, { once: true });
+    mediaRecorder.addEventListener('error', () => {
+      discardRecording = true;
+      stopRecordingTracks();
+      resetRecordingUi();
+      showToast('Браузеру не удалось записать голос.');
+    }, { once: true });
+    mediaRecorder.start(250);
+    isStartingRecording = false;
+    isRecording = true;
+    recordingStartedAt = Date.now();
+    recordingBar.hidden = false;
+    recordingTime.textContent = '00:00';
+    micButton.classList.add('recording');
+    micButton.disabled = false;
+    micButton.textContent = '■';
+    micButton.setAttribute('aria-label', 'Остановить и отправить голосовое сообщение');
+    micButton.title = 'Остановить и отправить';
+    attachButton.disabled = true;
+    chatForm.querySelector('.send-button').disabled = true;
+    recordingTimer = setInterval(updateRecordingClock, 250);
+    recordingTimeout = setTimeout(() => stopVoiceRecording(true), MAX_RECORDING_MS);
+  } catch (error) {
+    isStartingRecording = false;
+    stopRecordingTracks();
+    resetRecordingUi();
+    const denied = error?.name === 'NotAllowedError' || error?.name === 'SecurityError';
+    showToast(denied ? 'Разрешите сайту доступ к микрофону в настройках браузера.' : 'Не удалось включить микрофон.');
+  }
+};
+
+const toggleVoiceRecording = () => {
+  if (isStartingRecording) return;
+  if (isRecording) stopVoiceRecording(false);
+  else startVoiceRecording();
 };
 
 const setAuthenticated = (authenticated) => {
@@ -724,7 +933,7 @@ const clearActiveConversation = async () => {
   }
 };
 
-const sendMessage = async (text, attachments = []) => {
+const sendMessage = async (text, attachments = [], options = {}) => {
   if (isSending || (!text.trim() && !attachments.length)) return;
   if (!activeConversationId) await createConversation();
   const clean = text.trim() || 'Проанализируй прикреплённые файлы.';
@@ -732,6 +941,7 @@ const sendMessage = async (text, attachments = []) => {
   const sendButton = chatForm.querySelector('.send-button');
   sendButton.disabled = true;
   attachButton.disabled = true;
+  micButton.disabled = true;
   renderAttachmentTray();
   const optimisticUser = addMessage('user', clean, { attachments: attachments.map((item) => item.file.name) });
   const loading = addMessage('assistant', 'Думаю', { loading: true, model: selectedModel });
@@ -745,6 +955,7 @@ const sendMessage = async (text, attachments = []) => {
         model: selectedModel,
         message: clean,
         attachments: payloadAttachments,
+        voice_message: Boolean(options.voiceMessage),
       }),
     });
     loading.remove();
@@ -764,6 +975,7 @@ const sendMessage = async (text, attachments = []) => {
     isSending = false;
     sendButton.disabled = false;
     attachButton.disabled = false;
+    micButton.disabled = false;
     renderAttachmentTray();
     chatInput.focus();
   }
@@ -802,6 +1014,7 @@ const startSync = () => {
 
 const logout = async (notifyWorker = true) => {
   clearInterval(syncTimer);
+  cancelVoiceRecording();
   clearAttachments();
   personalizationModal.hidden = true;
   document.body.classList.remove('modal-open');
@@ -855,6 +1068,10 @@ loginForm?.addEventListener('submit', async (event) => {
 
 chatForm?.addEventListener('submit', (event) => {
   event.preventDefault();
+  if (isRecording) {
+    showToast('Нажмите микрофон ещё раз, чтобы отправить запись.');
+    return;
+  }
   const value = chatInput.value;
   if (!value.trim() && !selectedAttachments.length) return;
   const attachments = [...selectedAttachments];
@@ -876,6 +1093,7 @@ chatInput?.addEventListener('input', () => {
 });
 
 attachButton?.addEventListener('click', () => fileInput.click());
+micButton?.addEventListener('click', toggleVoiceRecording);
 fileInput?.addEventListener('change', () => addAttachments(fileInput.files));
 
 chatInput?.addEventListener('paste', (event) => {
@@ -885,7 +1103,7 @@ chatInput?.addEventListener('paste', (event) => {
 
 chatForm?.addEventListener('dragover', (event) => {
   event.preventDefault();
-  if (!isSending) chatForm.classList.add('dragging');
+  if (!isSending && !isRecording) chatForm.classList.add('dragging');
 });
 chatForm?.addEventListener('dragleave', (event) => {
   if (!chatForm.contains(event.relatedTarget)) chatForm.classList.remove('dragging');
@@ -893,7 +1111,7 @@ chatForm?.addEventListener('dragleave', (event) => {
 chatForm?.addEventListener('drop', (event) => {
   event.preventDefault();
   chatForm.classList.remove('dragging');
-  if (!isSending) addAttachments(event.dataTransfer?.files);
+  if (!isSending && !isRecording) addAttachments(event.dataTransfer?.files);
 });
 
 modelButtons.forEach((button) => button.addEventListener('click', () => selectModel(button.dataset.model)));
@@ -902,9 +1120,13 @@ promptButtons.forEach((button) => button.addEventListener('click', () => {
   chatInput.focus();
 }));
 newChatButton?.addEventListener('click', async () => {
+  if (isRecording) cancelVoiceRecording();
   try { await createConversation(); } catch (error) { showToast(error.message); }
 });
-clearChatButton?.addEventListener('click', clearActiveConversation);
+clearChatButton?.addEventListener('click', () => {
+  if (isRecording) cancelVoiceRecording();
+  clearActiveConversation();
+});
 mobileMenu?.addEventListener('click', () => {
   const open = sidebar.classList.toggle('open');
   mobileMenu.setAttribute('aria-expanded', String(open));
