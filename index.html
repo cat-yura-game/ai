@@ -63,6 +63,7 @@
         <div class="account-menu glass" id="account-menu" hidden>
           <strong id="account-name">Пользователь</strong>
           <small id="account-id">Telegram ID</small>
+          <button id="account-personalization-button" type="button">Персонализация</button>
           <button id="logout-button" type="button">Выйти</button>
         </div>
       </div>
@@ -84,9 +85,10 @@
           </button>
         </div>
       </div>
+      <button class="personalization-button" id="personalization-button" type="button"><span>✦</span><span><b>Персонализация</b><small>Имя, информация и стиль ответов</small></span><i>→</i></button>
       <div class="sidebar-section recent-section">
-        <span class="sidebar-label">ТЕКУЩИЙ ДИАЛОГ</span>
-        <div class="current-chat"><span>◌</span><p><b id="chat-title">Новый диалог</b><small>Только на этом устройстве</small></p></div>
+        <span class="sidebar-label">ВАШИ ДИАЛОГИ <i id="sync-status">синхронизация</i></span>
+        <div class="conversation-list" id="conversation-list" aria-label="Сохранённые диалоги"></div>
       </div>
       <div class="plan-panel">
         <div class="plan-panel-head"><span>ВЕБ-ЛИМИТ</span><b id="plan-badge">FREE</b></div>
@@ -127,6 +129,39 @@
         <p>AI может ошибаться. Проверяйте важную информацию.</p>
       </div>
     </main>
+  </div>
+
+  <div class="personalization-modal" id="personalization-modal" hidden>
+    <button class="personalization-backdrop" type="button" aria-label="Закрыть персонализацию"></button>
+    <section class="personalization-panel glass" role="dialog" aria-modal="true" aria-labelledby="personalization-title">
+      <div class="personalization-head">
+        <div><span class="eyebrow"><i></i> НАСТРОЙКИ АККАУНТА</span><h2 id="personalization-title">Персонализация</h2></div>
+        <button id="personalization-close" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <p class="personalization-lead">Расскажите немного о себе — нейросеть будет учитывать это во всех новых ответах на телефоне и компьютере.</p>
+      <form id="personalization-form">
+        <label class="personalization-field">
+          <span>Как к вам обращаться</span>
+          <input id="preferred-name" name="preferred_name" type="text" maxlength="60" autocomplete="name" placeholder="Например, Юра">
+          <small>Можно оставить пустым.</small>
+        </label>
+        <label class="personalization-field">
+          <span>Немного о себе</span>
+          <textarea id="personalization-about" name="about" rows="5" maxlength="1200" placeholder="Чем вы занимаетесь, какие у вас цели, что важно учитывать в ответах…"></textarea>
+          <small><i id="about-counter">0</i> / 1200</small>
+        </label>
+        <fieldset class="response-style-field">
+          <legend>Какие ответы вы предпочитаете</legend>
+          <div class="style-choice-grid">
+            <label><input type="radio" name="response_style" value="short"><span><b>Короткие</b><small>Только главное, без лишних деталей</small></span></label>
+            <label><input type="radio" name="response_style" value="balanced" checked><span><b>Сбалансированные</b><small>Достаточно подробно и без воды</small></span></label>
+            <label><input type="radio" name="response_style" value="detailed"><span><b>Подробные</b><small>Объяснения, нюансы и примеры</small></span></label>
+          </div>
+        </fieldset>
+        <div class="personalization-status" id="personalization-status" role="status" aria-live="polite"></div>
+        <div class="personalization-footer"><button id="personalization-cancel" type="button">Отмена</button><button type="submit">Сохранить настройки</button></div>
+      </form>
+    </section>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
