@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07080c">
+  <meta name="description" content="zashugannyy kot | Ai — полноценный AI-чат в браузере для пользователей Telegram-бота.">
+  <title>zashugannyy kot | Ai — Web</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <div class="noise" aria-hidden="true"></div>
+
+  <section class="auth-screen" id="auth-screen">
+    <div class="auth-shell">
+      <div class="auth-visual">
+        <a class="brand" href="#" aria-label="zashugannyy kot | Ai">
+          <span class="brand-mark">AI</span>
+          <span><b>zashugannyy kot</b><small>AI WEB SPACE</small></span>
+        </a>
+        <div class="auth-orbit" aria-hidden="true"><span>LOW</span><span>MEDIUM</span><span>HIGH</span><i>AI</i></div>
+        <div class="auth-copy">
+          <span class="eyebrow"><i></i> ВАША ПОДПИСКА — ВАШ ДОСТУП</span>
+          <h1>AI теперь<br><em>в браузере</em></h1>
+          <p>Получите одноразовый код в Telegram-боте и продолжайте работать с нейросетью на большом экране.</p>
+        </div>
+        <div class="auth-benefits"><span>◈ 3 режима AI</span><span>◎ Общая подписка</span><span>↗ Отдельные веб-лимиты</span></div>
+      </div>
+
+      <div class="auth-form-side">
+        <form class="auth-card" id="login-form">
+          <span class="auth-step">БЕЗОПАСНЫЙ ВХОД / 01</span>
+          <h2>Введите код</h2>
+          <p>Откройте Telegram-бота, нажмите «Войти на сайте» и скопируйте одноразовый код.</p>
+          <label for="login-code">Код авторизации</label>
+          <input id="login-code" name="code" type="text" inputmode="text" autocomplete="one-time-code" maxlength="10" placeholder="K7M4P-PQ2X" required>
+          <button class="primary-button" type="submit"><span>Войти в AI Space</span><b>↗</b></button>
+          <div class="auth-status" id="auth-status" role="status" aria-live="polite"></div>
+          <div class="auth-divider"><span>КОДА ЕЩЁ НЕТ?</span></div>
+          <a class="telegram-button" href="https://t.me/zashugannyygiftcat_bot" target="_blank" rel="noopener noreferrer">Открыть Telegram-бота <span>↗</span></a>
+          <small class="security-note">Код действует несколько минут и используется только один раз.</small>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <div class="app" id="app" hidden>
+    <header class="app-header glass">
+      <button class="mobile-menu" type="button" aria-label="Открыть меню" aria-expanded="false">☰</button>
+      <a class="brand" href="#" aria-label="На главную">
+        <span class="brand-mark">AI</span>
+        <span><b>zashugannyy kot</b><small>AI WEB SPACE</small></span>
+      </a>
+      <div class="header-center"><i></i><span>Система работает</span></div>
+      <div class="header-account">
+        <div class="usage-mini"><span id="header-plan">FREE</span><b id="header-usage">0 / 3</b></div>
+        <button class="avatar-button" id="account-button" type="button" aria-label="Меню аккаунта">YK</button>
+        <div class="account-menu glass" id="account-menu" hidden>
+          <strong id="account-name">Пользователь</strong>
+          <small id="account-id">Telegram ID</small>
+          <button id="logout-button" type="button">Выйти</button>
+        </div>
+      </div>
+    </header>
+
+    <aside class="sidebar glass" id="sidebar">
+      <button class="new-chat-button" id="new-chat-button" type="button"><span>＋</span> Новый диалог</button>
+      <div class="sidebar-section">
+        <span class="sidebar-label">РЕЖИМ МОДЕЛИ</span>
+        <div class="model-list" role="radiogroup" aria-label="Выбор модели">
+          <button class="model-option active" type="button" data-model="low" role="radio" aria-checked="true">
+            <span class="model-symbol">⚡</span><span><b>Low</b><small>Быстро и легко</small></span><i></i>
+          </button>
+          <button class="model-option" type="button" data-model="medium" role="radio" aria-checked="false">
+            <span class="model-symbol">✦</span><span><b>Medium</b><small>Баланс на каждый день</small></span><i></i>
+          </button>
+          <button class="model-option" type="button" data-model="high" role="radio" aria-checked="false">
+            <span class="model-symbol">◆</span><span><b>High</b><small>Максимум возможностей</small></span><i></i>
+          </button>
+        </div>
+      </div>
+      <div class="sidebar-section recent-section">
+        <span class="sidebar-label">ТЕКУЩИЙ ДИАЛОГ</span>
+        <div class="current-chat"><span>◌</span><p><b id="chat-title">Новый диалог</b><small>Только на этом устройстве</small></p></div>
+      </div>
+      <div class="plan-panel">
+        <div class="plan-panel-head"><span>ВЕБ-ЛИМИТ</span><b id="plan-badge">FREE</b></div>
+        <div class="plan-count"><strong id="remaining-count">3</strong><span id="remaining-label">запроса осталось</span></div>
+        <div class="progress-track"><i id="usage-progress"></i></div>
+        <p id="reset-label">Обновится завтра</p>
+        <a href="https://t.me/zashugannyygiftcat_bot" target="_blank" rel="noopener noreferrer">Управлять подпиской ↗</a>
+      </div>
+      <p class="sidebar-foot">WEB BUILD / 01</p>
+    </aside>
+
+    <main class="chat-main">
+      <div class="chat-topline">
+        <div><span class="active-model-dot"></span><b id="active-model-title">LOW</b><small id="active-model-description">Быстрый режим</small></div>
+        <button class="clear-chat" id="clear-chat" type="button">Очистить чат</button>
+      </div>
+
+      <div class="messages" id="messages" aria-live="polite" aria-relevant="additions">
+        <section class="welcome-state" id="welcome-state">
+          <div class="welcome-mark"><span>AI</span><i></i><i></i></div>
+          <span class="eyebrow"><i></i> ГОТОВ К РАБОТЕ</span>
+          <h2>Что создадим<br><em>сегодня?</em></h2>
+          <p>Выберите режим и задайте вопрос. Ваш веб-лимит общий для всех моделей.</p>
+          <div class="prompt-grid">
+            <button type="button"><span>01</span><b>Придумай идею</b><small>для проекта или контента</small></button>
+            <button type="button"><span>02</span><b>Объясни сложное</b><small>простыми словами</small></button>
+            <button type="button"><span>03</span><b>Помоги с текстом</b><small>написать или улучшить</small></button>
+            <button type="button"><span>04</span><b>Разбери код</b><small>найти проблему и объяснить</small></button>
+          </div>
+        </section>
+      </div>
+
+      <div class="composer-wrap">
+        <form class="composer glass" id="chat-form">
+          <textarea id="chat-input" rows="1" maxlength="6000" placeholder="Напишите сообщение…" required></textarea>
+          <div class="composer-bottom"><span><b id="composer-model">LOW</b> · <i id="composer-remaining">3 запроса</i></span><button type="submit" aria-label="Отправить">↑</button></div>
+        </form>
+        <p>AI может ошибаться. Проверяйте важную информацию.</p>
+      </div>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="config.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
